@@ -1,0 +1,22 @@
+/* Requires the official PeerTube dark theme installed and only that be used */
+body {
+    --mainColor: rgb(0, 91, 150);
+    --mainColorLighter: rgb(50, 123, 171);
+    --mainColorLightest: rgb(70, 136, 179);
+    --mainColorVeryLight: rgb(0, 18, 30);
+    --mainHoverColor: rgb(76, 140, 181);
+    --hoverColor: rgb(76, 140, 181);
+    --menuBackgroundColor: rgb(0, 18, 30);
+    --mainBackgroundColor: rgb(0, 18, 30);
+    --submenuBackgroundColor: rgb(0, 11, 18);
+    --inputBorderColor: rgb(50, 123, 171);
+    --inputBackgroundColor: rgb(0, 45, 75);
+    --greyForegroundColor: rgb(76, 140, 181);
+    --greyBackgroundColor: rgb(0, 45, 75);
+    --channelBackgroundColor: rgb(0, 18, 30);
+}
+
+/* You need to inspect element the logged-in-block to get the current ngcontent signature */
+.logged-in-block[_ngcontent-ng-c3096896509] {
+    background-color: rgb(9, 18, 30, 0);
+}

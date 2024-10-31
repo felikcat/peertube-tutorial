@@ -1,0 +1,417 @@
+== About
+This is a guide on how to entirely setup a PeerTube instance from scratch, and do it proper without  overcomplications.
+
+This is a living document, it will improve over-time.
+
+== 1. Buying a server
+
+.Best value servers for XXX
+- https://buyvm.net/[BuyVM/Frantech's dedicated KVM slices] in combination with their https://buyvm.net/block-storage-slabs/[block storage slabs]. Their Las Vegas and Luxembourg locations are the most politically stable.
+- https://koddos.net/[KoDDoS' offshore dedicated servers]. Ensure if you get their HDDs that you buy 2 or more of the same capacity, then configure them as RAID 0.
+
+Ubuntu Server 24.04 is used as the distro of choice.
+
+== 2. Hardening
+
+Create an account at https://ubuntu.com/pro/dashboard[ubuntu.com/pro], and retrieve the "Command to attach a machine". Paste that command into your server. This will enable livepatching.
+
+Add a new user called "server" that'll be later used to disable login via the root account: +
+`# useradd -m -G sudo -s /bin/bash server`
+
+Set its password: +
+`# passwd server`
+
+Login to the server user.
+
+=== [Optional] Setup a YubiKey for authentication
+NOTE: This matters when ensuring the server is not completely or at all compromised if your own PC gets infected.
+
+Setup the YubiKey using https://developers.yubico.com/SSH/Securing_SSH_with_FIDO2.html[their official guide for FIDO2]. Make sure when prompted to "Enter file in which to save the key", put `/home/YOUR_USERNAME/.ssh/yubikey1` then `/home/YOUR_USERNAME/.ssh/yubikey2` for your second key, and do not put a passphrase.
+
+Example of copying the public key to the server: +
+`ssh-copy-id -i ~/.ssh/yubikey1.pub -p YOUR_SSH_PORT server@YOUR_SERVER_IP`
+
+NOTE: If `/etc/ssh/sshd_config.d/50-cloud-init.conf` exists, remove that file, otherwise the YubiKey login gets ignored.
+
+To login with the Yubikey and a custom port, it looks like this: +
+`ssh -i ~/.ssh/yubikey1 YOUR_SERVER_IP -p YOUR_SSH_PORT -l server`
+
+=== Changing SSH port and setting up a firewall
+. Sudo edit `/etc/ssh/sshd_config` to set the `Port (pick a port between 40000-65000 here)`.
+- `sudo ufw allow YOUR_SSH_PORT`
+- `sudo systemctl reboot`
+
+. `sudo ufw enable`
+- `sudo ufw default deny incoming`
+
+=== Installing necessary packages
+TIP: *irqbalance* balances interrupts across CPU cores to handle high load more efficiently, which can prevent low networking performance. +
+*AppArmor* is to stop software from doing what they shouldn't, hence better security. +
+*auditd* is to allow viewing AppArmor logs, but also installing auditd allows AppArmor profiles to be created by you. +
+*Unattended upgrades* is so you don't accidentally forget to update packages, which would cause security issues. +
+*UFW* is a firewall management tool for blocking off unused ports. +
+*Fail2ban* & *python3-systemd* is to make bruteforce password attacks on SSH and your web server (nginx) much more difficult. +
+*apt-transport-https* is to allow apt to operate over HTTPS to prevent security flaws such as https://justi.cz/security/2019/01/22/apt-rce.html[RCEs]. +
+*linux-tools-$(uname -r)* for `cpupower`; remove this if not using a dedicated server. Used to set the performance governor for the CPU.
+
+`sudo apt update`
+
+`sudo apt install irqbalance apparmor apparmor-utils auditd unattended-upgrades apt-listchanges ufw fail2ban python3-systemd apt-transport-https ansible linux-tools-$(uname -r)`
+
+`sudo apt upgrade -y`
+
+
+=== Add the kernel command line options from the Kernel Self Protection Project
+To make it easy, put this inside `GRUB_CMDLINE_LINUX` (please check the https://kspp.github.io/Recommended_Settings#kernel-command-line-options[KSPP link] and compare "kernel command line options" and "x86_64"): `hardened_usercopy=1 init_on_alloc=1 init_on_free=1 randomize_kstack_offset=on page_alloc.shuffle=1 slab_nomerge pti=on iommu.passthrough=0 iommu.strict=1 mitigations=auto kfence.sample_interval=100 vsyscall=none vdso32=0 cfi=kcfi`
+
+`sudo grub-mkconfig -o /boot/grub/grub.cfg`
+
+
+=== Setup fail2ban
+`echo "sshd_backend = systemd" | sudo tee -a /etc/fail2ban/paths-debian.conf`
+
+Sudo edit `/etc/fail2ban/fail2ban.local`:
+----
+[DEFAULT]
+allowipv6 = auto
+backend = systemd
+banaction = ufw
+banaction_allports = ufw
+bantime = 2h
+ignoreip = 127.0.0.1/8
+logtarget = SYSTEMD-JOURNAL
+maxretry = 5
+----
+
+Sudo edit `/etc/fail2ban/jail.local`
+----
+[sshd]
+enabled = true
+port = YOUR_SSH_PORT
+
+[nginx-http-auth]
+enabled = true
+port = http,https
+logpath = %(nginx_error_log)s
+----
+
+`sudo systemctl restart fail2ban`
+
+
+=== [Optional] Set up remote auditing
+NOTE: Buy a server with 40GB of storage for this.
+
+Sudo edit `/etc/audit/audisp-remote.conf`:
+----
+remote_server = IP_OF_YOUR_SECOND_SERVER
+# Prevents "queue is full - dropping event" errors.
+priority_boost = 8
+----
+
+`sudo systemctl restart auditd`
+
+Just incase auditd was already causing systemd-journald to use a lot of memory usage from errors occuring: +
+`sudo systemctl restart systemd-journald`
+
+
+=== Setup sysctl parameters
+Sudo edit: `/etc/sysctl.d/99-custom-hardening.conf`
+----
+# Try to keep kernel address exposures out of various /proc files (kallsyms, modules, etc).
+# There is no CONFIG for the changing the initial value:
+# https://lore.kernel.org/lkml/20101217164431.08f3e730.akpm@linux-foundation.org/
+# If root absolutely needs values from /proc, use value "1".
+kernel.kptr_restrict = 2
+
+# Avoid kernel memory address exposures via dmesg (this value can also be set by CONFIG_SECURITY_DMESG_RESTRICT).
+kernel.dmesg_restrict = 1
+
+# Block non-uid-0 profiling (needs distro patch https://patchwork.kernel.org/patch/9249919/).
+# Otherwise this is the same as "= 2".
+kernel.perf_event_paranoid = 3
+
+# Turn off kexec, even if it's built in.
+kernel.kexec_load_disabled = 1
+
+# Enable all available Address Space Randomization (ASLR) for userspace processes.
+kernel.randomize_va_space = 2
+
+# Block all PTRACE_ATTACH. If you need ptrace to work, then avoid non-ancestor ptrace access to running processes and their credentials, and use value "1".
+kernel.yama.ptrace_scope = 3
+
+# Disable User Namespaces, as it opens up a large attack surface to unprivileged users.
+user.max_user_namespaces = 0
+
+# Disable tty line discipline autoloading (see CONFIG_LDISC_AUTOLOAD).
+dev.tty.ldisc_autoload = 0
+
+# Disable TIOCSTI which is used to inject keypresses. (This will, however, break screen readers.)
+dev.tty.legacy_tiocsti = 0
+
+# Turn off unprivileged eBPF access.
+kernel.unprivileged_bpf_disabled = 1
+
+# Reboot after even 1 WARN or BUG/Oops. Adjust for your tolerances. (Since v6.2)
+# If you want to set oops_limit greater than one, you will need to disable CONFIG_PANIC_ON_OOPS.
+kernel.warn_limit = 1
+kernel.oops_limit = 1
+
+# Turn on BPF JIT hardening, if the JIT is enabled.
+net.core.bpf_jit_harden = 2
+
+# Disable dangerous userfaultfd usage.
+vm.unprivileged_userfaultfd = 0
+
+# Disable POSIX symlink and hardlink corner cases that lead to lots of filesystem confusion attacks.
+fs.protected_symlinks = 1
+fs.protected_hardlinks = 1
+
+# Disable POSIX corner cases with creating files and fifos unless the directory owner matches. Check your workloads!
+fs.protected_fifos = 2
+fs.protected_regular = 2
+
+# Make sure the default process dumpability is set (processes that changed privileges aren't dumpable).
+# Also stops processes from ignoring kernel.core_pattern = /dev/null
+fs.suid_dumpable = 0
+
+# Don't save core dumps anywhere for better security, and less disk usage.
+kernel.core_pattern = /dev/null
+----
+
+
+== 3. Tuning
+Sudo edit: `/etc/sysctl.d/99-custom-tuning.conf`
+----
+# The fq (fair queueing) qdisc is recommended for BBR, instead of the default fq_codel
+net.core.default_qdisc = fq
+
+# Keep network throughput consistently high even with packet loss,
+# at the cost of a little maximum upload burst
+net.ipv4.tcp_congestion_control = bbr
+
+# Use TCP Fast Open for both incoming and outgoing connections to reduce latency
+net.ipv4.tcp_fastopen = 3
+
+# Ensure MTU is valid to prevent stuck connections; very useful on misconfigured networks:
+# https://blog.cloudflare.com/path-mtu-discovery-in-practice/
+net.ipv4.tcp_mtu_probing = 1
+
+# Allow TCP with buffers up to 16MB
+net.core.rmem_default = 16777216
+net.core.rmem_max = 16777216
+net.core.wmem_default = 16777216
+net.core.wmem_max = 16777216
+net.core.optmem_max = 16777216
+
+# Increase Linux autotuning TCP buffer limit to 64MB
+net.ipv4.tcp_rmem = 4096 524288 67108864
+net.ipv4.tcp_wmem = 4096 524288 67108864
+
+# Don't swap to disk while the memory is not overloaded
+vm.swappiness = 1
+
+# Reduce TCP performance spikes by disabling timestamps
+net.ipv4.tcp_timestamps = 0
+
+# Done so TCP doesn't run out of memory
+net.ipv4.tcp_mem = 3145728 4194304 6291456
+
+# Protect against TCP TIME-WAIT assassination, which increases socket re-use
+net.ipv4.tcp_rfc1337 = 1
+
+# Allow 3/4 of available free memory in the receive buffer
+net.ipv4.tcp_adv_win_scale = 2
+
+# Allow ping to be ran under a normal user, fixing "Operation not permitted"
+net.ipv4.ping_group_range = 0 1000
+
+kernel.sched_autogroup_enabled = 0
+
+net.core.netdev_budget = 209715
+net.core.netdev_max_backlog = 3145728
+net.core.somaxconn = 50000
+
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_orphan_retries = 2
+net.ipv4.tcp_retries2 = 8
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_syn_retries = 2
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_workaround_signed_windows = 1
+
+vm.min_free_kbytes = 524288
+vm.zone_reclaim_mode = 1
+
+# For PeerTube to work correctly
+vm.overcommit_memory=1
+# For redis-server to work correctly, which PeerTube depends on
+user.max_user_namespaces=2062241
+----
+
+
+== 4. Setup a storage slab (BuyVM/Frantech only)
+List the disks, the storage slab should have model "SLAB" and contain no filesystem: +
+`lsblk -o PATH,VENDOR,MODEL,PARTLABEL,FSTYPE,FSVER,SIZE,FSUSE%,FSAVAIL,MOUNTPOINTS`
+
+For this example we are using `/dev/sda`: +
+`sudo parted /dev/sda mklabel gpt` +
+`sudo parted /dev/sda mkpart primary 0% 100%`
+
+Required to run and format a drive as XFS: +
+`sudo apt install xfsprogs && sudo modprobe xfs`
+
+Create an XFS partition for `/dev/sda1`: +
+`sudo mkfs.xfs /dev/sda1`
+
+Since this storage slab will be used as PeerTube video storage, install what PeerTube requires; this will give us the `/var/www` directory naturally: +
+`sudo apt install certbot nginx ffmpeg postgresql postgresql-contrib openssl g++ make redis-server git cron wget`
+
+Create the PeerTube user: +
+`sudo useradd -m -d /var/www/peertube -s /bin/bash -p peertube peertube`
+
+Set a password for the user: +
+`sudo passwd peertube`
+
+Ensures the directory permissions are correct: +
+`sudo chmod 755 -R /var/www/peertube`
+
+Get the UUID for `/dev/sda1`: +
+`sudo blkid`
+
+Sudo edit `/etc/fstab`: +
+----
+UUID=your-uuid-here /mnt/slab xfs defaults,noatime,x-systemd.automount 0 0
+----
+
+`sudo systemctl daemon-reload && sudo mount /dev/sda1`
+
+Check to see if `/dev/sda1` has been mounted: +
+`df -h`
+
+Ensures the assigned user access is correct: +
+`sudo chown peertube: /mnt/slab && sudo chown -R peertube: /mnt/slab`
+
+
+== 5. PeerTube installation
+Required for PeerTube's official instructions, which are not listed there: +
+`sudo apt install unzip npm & sudo npm install yarn -g`
+
+https://docs.joinpeertube.org/install/any-os#database[Follow PeerTube's official instructions] (skip to Database if you setup a storage slab).
+
+NOTE: If you're already using Cloudfare: when it comes time to generate the certificate, do it this way instead: +
+`sudo certbot certonly --manual --preferred-challenges dns -d YOURDOMAIN.HERE`
+
+
+=== [Optional] Setting up Cloudflare tunneling
+Add Cloudflare GPG key: +
+`sudo mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null`
+
+Add Cloudflare repository: +
+`echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared jammy main' | sudo tee /etc/apt/sources.list.d/cloudflared.list`
+
+Update package list and install cloudflared: +
+`sudo apt-get update && sudo apt-get install cloudflared`
+
+`cloudflared login`
+
+If the name is already taken, delete it, then do this again (we need the credentials generated): +
+`cloudflared tunnel create peertube`
+
+Edit `~/.cloudflared/config.yml`:
+----
+tunnel: The ID for the "peertube" tunnel
+credentials-file: /home/server/.cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+    - hostname: YOUR_DOMAIN_HERE
+      service: http://localhost:9000
+    - service: http_status:404
+----
+
+`cloudflared tunnel route dns peertube YOURDOMAIN.HERE`
+
+`sudo cloudflared --config ~/.cloudflared/config.yml service install`
+
+`sudo systemctl enable --now cloudflared`
+
+=== Using the storage slab for PeerTube (BuyVM/Frantech only)
+`sudo -u peertube -i` then edit `config/production.yaml`
+
+[yaml]
+----
+storage:
+    web_videos: '/mnt/slab/peertube/storage/web-videos'
+    original_video_files: '/mnt/slab/peertube/storage/original-video-files'
+----
+
+Exit the PeerTube user, then run: +
+`sudo systemctl restart peertube`
+
+
+== 6. Setting up email confirmation and password recovery emails
+Make a ticket with your hosting provider to unblock port 465, otherwise your server won't be able to send emails.
+
+Before doing this ensure that you've setup a privacy policy, an about us, and a contact email. You can ask https://www.perplexity.ai/[Perplexity's AI] to do this for you.
+
+Go to PeerTube's 'Administration -> Configuration -> Basic', then scroll down until you see "Enable contact form", disable it to prevent abuse.
+
+NOTE: Self-hosting an SMTP server will lead to your server's IP being leaked, making it vulnerable to DDoS attacks.
+
+=== Using Zoho's ZeptoMail
+https://www.zoho.com/zeptomail/[Sign up] for ZeptoMail.
+
+Since Cloudflare is assumed to be used for its layer-7 anti-DDoS, ZeptoMail should be able to automate its domain record configuration.
+
+On the left-side of the webpage under "Mail Agents", click on "mail_agent_1".
+
+Click on "SMTP" and there you will see your username and password. Yes the username is infact "emailapikey".
+
+
+=== Using Amazon SES (do not use unless your website is well established)
+Use Amazon SES's https://us-east-2.console.aws.amazon.com/ses/home#/get-set-up[get set up] page to setup your domain.
+
+Sign in to the AWS Management Console and https://console.aws.amazon.com/ses/[open the Amazon SES console]. 
+
+In the left navigation pane, click on "SMTP settings".
+
+On the "Simple Mail Transfer Protocol (SMTP) settings" page, click on "Create SMTP Credentials" in the upper-right corner. You'll be redirected to the IAM console.
+
+In the "Create User for SMTP" field, enter a name for your SMTP user or use the default provided.
+
+Click "Create user" in the bottom-right corner.
+
+On the next screen, you'll see your SMTP credentials.
+
+Note that the SMTP username is the same as the "Access key ID" shown, click "Show" under "SMTP password" to reveal the password.
+
+
+== 7. Hardening for nginx and PeerTube
+
+NOTE: Only start this once PeerTube is up and running.
+
+`sudo ansible-galaxy collection install -U devsec.hardening --force -vvv`
+
+Edit `~/harden.yaml`
+----
+- name: Do hardening via dev-sec's collection
+  hosts: localhost
+  roles:
+    - devsec.hardening.os_hardening
+    - devsec.hardening.nginx_hardening
+----
+
+`sudo ansible-playbook ~/harden.yaml`
+
+https://docs.joinpeertube.org/maintain/configuration#security[Read PeerTube's official section on hardening PeerTube].
+
+Refresh nginx to use the new hardened rules: +
+`sudo systemctl stop peertube && sudo systemctl restart nginx && sudo systemctl start peertube`
+
+Run this command then go around using PeerTube to its fullest, including making a user then uploading a video from that user: +
+`sudo aa-genprof /usr/sbin/nginx`
+
+== Useful commands
+TODO
