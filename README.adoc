@@ -15,7 +15,7 @@ Ubuntu Server 24.04 is used as the distro of choice.
 
 Create an account at https://ubuntu.com/pro/dashboard[ubuntu.com/pro], and retrieve the "Command to attach a machine". Paste that command into your server. This will enable livepatching.
 
-Add a new user called "server" that'll be later used to disable login via the root account: +
+Add a new user called "server" that'll be later used to disable logging in through the root account: +
 `# useradd -m -G sudo -s /bin/bash server`
 
 Set its password: +
@@ -26,23 +26,26 @@ Login to the server user.
 === [Optional] Setup a YubiKey for authentication
 NOTE: This matters when ensuring the server is not completely or at all compromised if your own PC gets infected.
 
-Setup the YubiKey using https://developers.yubico.com/SSH/Securing_SSH_with_FIDO2.html[their official guide for FIDO2]. Make sure when prompted to "Enter file in which to save the key", put `/home/YOUR_USERNAME/.ssh/yubikey1` then `/home/YOUR_USERNAME/.ssh/yubikey2` for your second key, and do not put a passphrase.
+Setup the YubiKey using https://developers.yubico.com/SSH/Securing_SSH_with_FIDO2.html[their official guide for FIDO2]. Make sure when prompted to "Enter file in which to save the key", put `/home/YOUR_USERNAME/.ssh/yubikey1` then `/home/YOUR_USERNAME/.ssh/yubikey2` for your second key, and do not put a passphrase for either.
 
 Example of copying the public key to the server: +
 `ssh-copy-id -i ~/.ssh/yubikey1.pub -p YOUR_SSH_PORT server@YOUR_SERVER_IP`
 
-NOTE: If `/etc/ssh/sshd_config.d/50-cloud-init.conf` exists, remove that file, otherwise the YubiKey login gets ignored.
+NOTE: If `/etc/ssh/sshd_config.d/50-cloud-init.conf` exists on the server, remove that file, otherwise the YubiKey login gets ignored.
 
 To login with the Yubikey and a custom port, it looks like this: +
 `ssh -i ~/.ssh/yubikey1 YOUR_SERVER_IP -p YOUR_SSH_PORT -l server`
 
-=== Changing SSH port and setting up a firewall
-. Sudo edit `/etc/ssh/sshd_config` to set the `Port (pick a port between 40000-65000 here)`.
-- `sudo ufw allow YOUR_SSH_PORT`
-- `sudo systemctl reboot`
 
-. `sudo ufw enable`
-- `sudo ufw default deny incoming`
+=== Changing SSH port and setting up a firewall
+Sudo edit `/etc/ssh/sshd_config` to set the `Port` to something between 40000 to 65000.
+
+`sudo ufw allow YOUR_SSH_PORT` +
+`sudo systemctl reboot`
+
+`sudo ufw enable` +
+`sudo ufw default deny incoming`
+
 
 === Installing necessary packages
 TIP: *irqbalance* balances interrupts across CPU cores to handle high load more efficiently, which can prevent low networking performance. +
