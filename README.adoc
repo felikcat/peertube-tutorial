@@ -3,16 +3,20 @@ This is a guide on how to entirely setup a PeerTube instance from scratch, and d
 
 This is a living document, it will improve over-time.
 
+I also plan to automate most of what's shown here.
+
 == 1. Buying a server
 
-.Best value servers for XXX
+If your internet connection is good enough (1gbps upload speeds), don't buy a server.
+
+.Best value servers for XXX:
 - https://buyvm.net/[BuyVM/Frantech's dedicated KVM slices] in combination with their https://buyvm.net/block-storage-slabs/[block storage slabs]. Their Las Vegas and Luxembourg locations are the most politically stable.
 - https://koddos.net/[KoDDoS' offshore dedicated servers]. Ensure if you get their HDDs that you buy 2 or more of the same capacity, then configure them as RAID 0.
 
 Ubuntu Server 24.04 is used as the distro of choice.
 
-== 2. Hardening
 
+== 2. Hardening
 Create an account at https://ubuntu.com/pro/dashboard[ubuntu.com/pro], and retrieve the "Command to attach a machine". Paste that command into your server. This will enable livepatching.
 
 Add a new user called "server" that'll be later used to disable logging in through the root account: +
@@ -22,6 +26,7 @@ Set its password: +
 `# passwd server`
 
 Login to the server user.
+
 
 === [Optional] Setup a YubiKey for authentication
 NOTE: This matters when ensuring the server is not completely or at all compromised if your own PC gets infected.
