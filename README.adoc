@@ -311,7 +311,7 @@ https://docs.joinpeertube.org/install/any-os#database[Follow PeerTube's official
 
 .If you're using Cloudflare
 Generate a self-signed certificate. Don't worry, Cloudflare will override this on your domain to use its own certificate: +
-`sudo openssl req -x509 -nodes -days 5475 -newkey rsa:2048 -keyout /etc/ssl/private/peertube-selfsigned.key -out /etc/ssl/certs/peertube-selfsigned.crt
+`sudo openssl req -x509 -nodes -days 5475 -newkey rsa:2048 -keyout /etc/ssl/private/peertube-selfsigned.key -out /etc/ssl/certs/peertube-selfsigned.crt`
 
 Then in `/etc/nginx/sites-available/peertube`, add:
 ----
