@@ -38,9 +38,10 @@ Example of copying the public key to the server: +
 
 NOTE: If `/etc/ssh/sshd_config.d/50-cloud-init.conf` exists on the server, remove that file, otherwise the YubiKey login gets ignored.
 
-To login with the Yubikey and a custom port, it looks like this: +
+To login with the YubiKey and a custom port, it looks like this: +
 `ssh -i ~/.ssh/yubikey1 YOUR_SERVER_IP -p YOUR_SSH_PORT -l server`
 
+TIP: If the login fails despite being correct, change YubiKeys, or restart your terminal.
 
 === Changing SSH port and setting up a firewall
 Sudo edit `/etc/ssh/sshd_config` to set the `Port` to something between 40000 to 65000.
@@ -274,7 +275,7 @@ Create an XFS partition for `/dev/sda1`: +
 `sudo mkfs.xfs /dev/sda1`
 
 Since this storage slab will be used as PeerTube video storage, install what PeerTube requires; this will give us the `/var/www` directory naturally: +
-`sudo apt install certbot nginx ffmpeg postgresql postgresql-contrib openssl g++ make redis-server git cron wget`
+`sudo apt install nginx ffmpeg postgresql postgresql-contrib openssl g++ make redis-server git cron wget`
 
 Create the PeerTube user: +
 `sudo useradd -m -d /var/www/peertube -s /bin/bash -p peertube peertube`
@@ -306,10 +307,21 @@ Ensures the assigned user access is correct: +
 Required for PeerTube's official instructions, which are not listed there: +
 `sudo apt install unzip npm & sudo npm install yarn -g`
 
-https://docs.joinpeertube.org/install/any-os#database[Follow PeerTube's official instructions] (skip to Database if you setup a storage slab).
+https://docs.joinpeertube.org/install/any-os#database[Follow PeerTube's official instructions]. Skip to Database if you setup a storage slab, and skip the `certbot` instructions if using Cloudflare.
 
-NOTE: If you're already using Cloudfare: when it comes time to generate the certificate, do it this way instead: +
-`sudo certbot certonly --manual --preferred-challenges dns -d YOURDOMAIN.HERE`
+.If you're using Cloudflare
+Generate a self-signed certificate. Don't worry, Cloudflare will override this on your domain to use its own certificate: +
+`sudo openssl req -x509 -nodes -days 5475 -newkey rsa:2048 -keyout /etc/ssl/private/peertube-selfsigned.key -out /etc/ssl/certs/peertube-selfsigned.crt
+
+Then in `/etc/nginx/sites-available/peertube`, add:
+----
+  ##
+  # Certificates
+  # you need a certificate to run in production. see https://letsencrypt.org/
+  ##
+  ssl_certificate /etc/ssl/certs/peertube-selfsigned.crt;
+  ssl_certificate_key /etc/ssl/private/peertube-selfsigned.key;
+----
 
 
 === [Optional] Setting up Cloudflare tunneling
@@ -420,6 +432,33 @@ Refresh nginx to use the new hardened rules: +
 
 Run this command then go around using PeerTube to its fullest, including making a user then uploading a video from that user: +
 `sudo aa-genprof /usr/sbin/nginx`
+
+== 8. Get past Cloudflare blocks with remote runners
+
+PeerTube can offload high CPU/long job like transcoding to a remote PeerTube runner, however, Cloudflare has numerous restrictions in place that prevent a successful transcode.
+
+https://docs.joinpeertube.org/maintain/tools#as-a-systemd-service[See here] on how to setup a remote runner. You can stop following instructions after "Register" to keep it brief.
+
+On the server, sudo edit `/etc/nginx/sites-available/peertube`:
+----
+# Change "listen 443 ssl https2" to "listen 443"
+# Change "listen [::]:443 ssl https2" to "listen [::]:443"
+----
+
+On the server: +
+`sudo systemctl restart nginx`
+
+On the PeerTube runner, sudo edit: `/srv/prunner/.config/peertube-runner-nodejs/default/config.toml`:
+----
+[[registeredInstances]]
+url = "http://YOUR_SERVER_IP:443"
+----
+
+Ensure port 443 inbound connections are allowed: +
+`sudo ufw allow 443`
+
+On the PeerTube Runner: +
+`sudo systemctl restart prunner`
 
 == Useful commands
 TODO
